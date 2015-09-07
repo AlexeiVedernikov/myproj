@@ -1,0 +1,1 @@
+insert into DISTRICT(DISTRICT_ID, NAME, DESCRIPTION, STATUS, REGION_ID) VALUES ('1', 'Никлиновский', 'Описание', 'Active', '1');

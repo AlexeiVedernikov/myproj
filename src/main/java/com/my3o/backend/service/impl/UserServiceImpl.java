@@ -1,0 +1,346 @@
+package com.my3o.backend.service.impl;
+
+import com.my3o.backend.config.IBackendProperties;
+import com.my3o.backend.dao.IGroupDao;
+import com.my3o.backend.dao.IOrganizationDao;
+import com.my3o.backend.dao.IUserDao;
+import com.my3o.backend.domain.GroupEntity;
+import com.my3o.backend.domain.OrganizationEntity;
+import com.my3o.backend.domain.UserEntity;
+import com.my3o.backend.service.*;
+import com.my3o.common.constant.ErrorCodes;
+import com.my3o.common.constant.Status;
+import com.my3o.common.dto.GroupDto;
+import com.my3o.common.dto.OrganizationDto;
+import com.my3o.common.dto.UserDto;
+import com.my3o.common.exception.BasicServiceException;
+import com.my3o.common.searchbean.GroupSearchBean;
+import com.my3o.common.searchbean.OrganizationSearchBean;
+import com.my3o.common.searchbean.UserSearchBean;
+import com.my3o.frontend.web.model.UserWebModel;
+import org.apache.commons.collections.CollectionUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.*;
+
+/**
+ * Created by: andrew
+ */
+@Service
+@Transactional
+public class UserServiceImpl implements IUserService {
+    protected Logger log = LoggerFactory.getLogger(this.getClass());
+
+    @Autowired
+    private IUserDao userDao;
+
+    @Autowired
+    private IOrganizationDao organizationDao;
+
+    @Autowired
+    private IGroupDao groupDao;
+
+    @Autowired
+    private IOrganizationService organizationService;
+
+    @Autowired
+    private IGroupService groupService;
+
+    @Autowired
+    private IParentService parentService;
+
+    @Autowired
+    private IBillUserService billUserService;
+
+    @Autowired
+    private IBackendProperties backendProperties;
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<UserDto> search(UserSearchBean searchBean) throws BasicServiceException {
+        List<UserDto> result = new ArrayList<UserDto>();
+
+        List<UserEntity> entityList = userDao.getByExample(searchBean);
+
+        if (CollectionUtils.isEmpty(entityList))
+            throw new BasicServiceException(ErrorCodes.RECORD_NOT_FOUND);
+
+        for (UserEntity ue : userDao.getByExample(searchBean)) {
+            result.add(toDto(ue));
+        }
+
+        return result;
+    }
+
+//    @Override
+//    @Transactional(readOnly = true)
+//    public List<UserDto> searchSome(UserSearchBean searchBean) throws BasicServiceException {
+//        List<UserDto> result = new ArrayList<UserDto>();
+//
+//        List<UserEntity> entityList = userDao.getByExample(searchBean, 0, 25);
+//
+//        if (CollectionUtils.isEmpty(entityList))
+//            throw new BasicServiceException(ErrorCodes.RECORD_NOT_FOUND);
+//
+//        for (UserEntity ue : userDao.getByExample(searchBean, 0, 25)) {
+//            result.add(toDto(ue));
+//        }
+//
+//        return result;
+//    }
+
+    @Override
+    public UserDto register(UserWebModel dataModel, String loginUserId) throws Exception {
+
+        UserDto userDto = new UserDto();
+
+        if ("-1".equals(dataModel.getId())) {
+            userDto.setId(null);
+        } else {
+            userDto.setId(dataModel.getId());
+
+            List<UserDto> userDtoList = new ArrayList<UserDto>();
+
+            Iterator<UserEntity> userEntityIterator = null;
+
+            if (dataModel.getUserType().toString().equals("Scholar")) {
+                userEntityIterator = userDao.findById(dataModel.getId()).getParentSet().iterator();
+            } else if (dataModel.getUserType().toString().equals("Parent")) {
+                userEntityIterator = userDao.findById(dataModel.getId()).getChildrenSet().iterator();
+            }
+
+            if (userEntityIterator != null) {
+                while (userEntityIterator.hasNext()) {
+                    UserEntity userEntity = userEntityIterator.next();
+                    userDtoList.add(parentService.toDtoUser(userEntity));
+                }
+            }
+
+            userDto.setUserList(userDtoList);
+
+        }
+        userDto.setName(dataModel.getName());
+        userDto.setDescription(dataModel.getDescription());
+        userDto.setEmail(dataModel.getEmail());
+        userDto.setLogin(dataModel.getEmail());
+        userDto.setPassword(dataModel.getPassword());
+        userDto.setPhone(dataModel.getPhone());
+        userDto.setUserType(dataModel.getUserType());
+        userDto.setStatus(dataModel.getStatus());
+        userDto.setIsFake(dataModel.getIsFake());
+        userDto.setUserType(dataModel.getUserType());
+
+        if (!dataModel.getOrganizationIdList().isEmpty()) {
+            OrganizationSearchBean oSearchBean = new OrganizationSearchBean();
+            for (int i = 0; i < dataModel.getOrganizationIdList().size(); i++) {
+                oSearchBean.addKey(dataModel.getOrganizationIdList().get(i));
+            }
+            userDto.setOrganizationList(organizationService.search(oSearchBean));
+        }
+
+        if (!dataModel.getGroupId().equals("disabled")) {
+            GroupSearchBean gSearchBean = new GroupSearchBean();
+            for (int i = 0; i < 1; i++) {
+                gSearchBean.addKey(dataModel.getGroupId());
+            }
+            userDto.setGroupList(groupService.search(gSearchBean));
+        }
+
+        UserSearchBean usb = new UserSearchBean();
+        UserDto uDto = new UserDto();
+        usb.addKey(dataModel.getId());
+
+        try {
+            uDto = search(usb).get(0);
+            userDto.setCreateTime(uDto.getCreateTime());
+            userDto.setLastUpdateTime(Calendar.getInstance().getTime());
+        } catch (BasicServiceException e) {
+            userDto.setCreateTime(Calendar.getInstance().getTime());
+        }
+
+        // String loginUserId = null;
+        // loginUserId = this.getUserId(request);
+
+        UserSearchBean usb1 = new UserSearchBean();
+        UserDto userCreateDto = new UserDto();
+        usb1.addKey(dataModel.getId());
+        try {
+            userCreateDto = search(usb1).get(0);
+            userDto.setCreateByUserId(userCreateDto.getCreateByUserId());
+            userDto.setUpdateByUserId(loginUserId);
+        } catch (BasicServiceException e) {
+            userDto.setCreateByUserId(loginUserId);
+        }
+
+//        BillUserDto billUserDto = new BillUserDto();
+//        billUserDto.setId(null);
+//        billUserDto.setName("Test");
+//        billUserDto.setDescription("Test1");
+//        billUserDto.setStatus(Status.Active);
+//        billUserDto.setQiwiStatus(QiwiStatus.New);
+//
+//        billUserDto.setUserPhone(dataModel.getPhone());
+//        billUserDto.setAmount(backendProperties.getQiwiAmount());
+//        billUserDto.setComment(backendProperties.getQiwiComment());
+//        billUserDto.setPrvName(backendProperties.getQiwiPrvName());
+//        billUserDto.setPrvId(backendProperties.getQiwiPrvId());
+//
+//        Calendar c = Calendar.getInstance();
+//        c.add(Calendar.DATE, backendProperties.getQiwiLifeTime());
+//        billUserDto.setLifetime(c.getTime());
+//
+//        billUserDto.setCcy("RUB");
+//        // billUserDto.setPaySource("qw");
+
+        UserEntity userEntity = userDao.merge(toEntity(userDto));
+
+//        if (dataModel.getId().equals("-1")) {
+//            billUserDto.setUserDto(new UserDto(userEntity.getId()));
+//            billUserService.bill(billUserDto, userDto);
+//        }
+        return toDto(userEntity);
+    }
+
+
+    // @Override
+    // public UserDto save(UserDto userDto) throws BasicServiceException {
+    // UserEntity e = userDao.save(toEntity(userDto));
+    // return toDto(e);
+    // }
+
+    @Override
+    public void delete(String pk) throws BasicServiceException {
+//        userDao.delete(userDao.findById(pk));
+        UserEntity userEntity = userDao.findById(pk);
+        userEntity.setStatus(Status.Deleted);
+        userDao.merge(userEntity);
+    }
+
+    public UserEntity toEntity(UserDto userDto) throws BasicServiceException {
+        UserEntity entity = new UserEntity();
+
+        entity.setId(userDto.getId());
+        entity.setName(userDto.getName());
+        entity.setDescription(userDto.getDescription());
+        entity.setPassword(userDto.getPassword());
+        entity.setEmail(userDto.getEmail());
+        entity.setLogin(userDto.getEmail());
+        entity.setPhone(userDto.getPhone());
+        entity.setUserType(userDto.getUserType());
+        entity.setStatus(userDto.getStatus());
+        entity.setIsFake(userDto.getIsFake());
+        entity.setCreateByUserId(userDto.getCreateByUserId());
+        entity.setCreateTime(userDto.getCreateTime());
+        entity.setLastUpdateTime(userDto.getLastUpdateTime());
+        entity.setUpdateByUserId(userDto.getUpdateByUserId());
+
+        if (userDto.getUserList() != null) {
+            Set<UserEntity> userEntitySet = new HashSet<UserEntity>(0);
+
+            for (UserDto dto : userDto.getUserList()) {
+                userEntitySet.add(userDao.findById(dto.getId()));
+            }
+
+            if (entity.getUserType().toString().equals("Scholar")) {
+                entity.setParentSet(userEntitySet);
+            } else if (entity.getUserType().toString().equals("Parent")) {
+                entity.setChildrenSet(userEntitySet);
+            }
+        }
+
+        if (userDto.getOrganizationList() != null) {
+            Set<OrganizationEntity> organizationSet = new HashSet<OrganizationEntity>(0);
+
+            for (OrganizationDto dto : userDto.getOrganizationList()) {
+                organizationSet.add(organizationDao.findById(dto.getId()));
+            }
+
+            entity.setOrganizationEntitySet(organizationSet);
+        }
+
+        if (userDto.getGroupList() != null) {
+            Set<GroupEntity> groupSet = new HashSet<GroupEntity>(0);
+
+            for (GroupDto dto : userDto.getGroupList()) {
+                groupSet.add(groupDao.findById(dto.getId()));
+            }
+
+            // groupSet.add(groupDao.findById(userDto.getGroupDto().getId()));
+            entity.setGroupEntitySet(groupSet);
+        }
+        return entity;
+    }
+
+    public UserDto toDto(UserEntity entity) {
+        UserDto userDto = new UserDto();
+
+        userDto.setId(entity.getId());
+        userDto.setName(entity.getName());
+        userDto.setDescription(entity.getDescription());
+        userDto.setPassword(entity.getPassword());
+        userDto.setEmail(entity.getEmail());
+        userDto.setLogin(entity.getEmail());
+        userDto.setPhone(entity.getPhone());
+        userDto.setUserType(entity.getUserType());
+        userDto.setStatus(entity.getStatus());
+        userDto.setIsFake(entity.getIsFake());
+        userDto.setCreateByUserId(entity.getCreateByUserId());
+        userDto.setCreateTime(entity.getCreateTime());
+        userDto.setLastUpdateTime(entity.getLastUpdateTime());
+        userDto.setUpdateByUserId(entity.getUpdateByUserId());
+
+        List<UserDto> userDtoList = new ArrayList<UserDto>();
+
+        Iterator<UserEntity> userEntityIterator = null;
+
+        if (entity.getUserType().toString().equals("Scholar")) {
+            userEntityIterator = entity.getParentSet().iterator();
+        } else if (entity.getUserType().toString().equals("Parent")) {
+            userEntityIterator = entity.getChildrenSet().iterator();
+        }
+
+        if (userEntityIterator != null) {
+            while (userEntityIterator.hasNext()) {
+                UserEntity userEntity = userEntityIterator.next();
+                userDtoList.add(parentService.toDtoUser(userEntity));
+            }
+        }
+
+        userDto.setUserList(userDtoList);
+
+        List<GroupDto> groupDtoList = new ArrayList<GroupDto>();
+        Iterator<GroupEntity> it = entity.getGroupEntitySet().iterator();
+        while (it.hasNext()) {
+            GroupEntity group = it.next();
+            groupDtoList.add(groupService.toDto(group));
+        }
+
+        userDto.setGroupList(groupDtoList);
+
+        List<OrganizationDto> organizationDtoList = new ArrayList<OrganizationDto>();
+
+        Iterator<OrganizationEntity> ite = entity.getOrganizationEntitySet().iterator();
+        while (ite.hasNext()) {
+            OrganizationEntity organization = ite.next();
+            organizationDtoList.add(organizationService.toDto(organization));
+        }
+
+        userDto.setOrganizationList(organizationDtoList);
+
+        // userDto.setOrganizationList1(entity.getOrganizationEntitySet());
+        return userDto;
+    }
+
+    public IUserDao getUserDao() {
+        return userDao;
+    }
+
+    @Override
+    public void setUserDao(IUserDao userDao) {
+    }
+
+}
